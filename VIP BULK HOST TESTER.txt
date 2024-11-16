@@ -1,0 +1,121 @@
+import socket
+import time
+import requests
+import re
+from colorama import Fore, init
+
+# Initialize colorama
+init(autoreset=True)
+
+# Regular expression for matching domain names and IP addresses
+HOST_REGEX = r'((\d{1,3}\.){3}\d{1,3})|([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
+
+def print_banner():
+    print(Fore.MAGENTA + r"""
+    ╔══╗────╔══╗╔═╗╔═╗╔╗╔╗  
+    ╚╗╗║╔══╗╚╗╔╝║╦╝║╔╝║╚╝║  
+    ╔╩╝║╚══╝─║║─║╩╗║╚╗║╔╗║  
+    ╚══╝─────╚╝─╚═╝╚═╝╚╝╚╝  
+    ──────────────────────  
+    ▄▄  █  ▄▄▄▄▄    ▄▄▄▄▄▄▄▄▄      ▄▄▄▄▄  ▄▄▄▄  ▄▄▄▄   ▄▄▄▄▄▄ 
+    ████ █  █        █   ▄▄▄▄      █       █    █ █    █   █
+    █ █ █ █  █  ▄    █   █ █ █     █       █    █ █    █   █
+    █ █ █ █  █ █ █   █   █▄█▄█     █       █    █ █    █   █
+    █▄█▄█▄█  █▄▄▄▄   █   ▄▄  █     ▀▀▀▀▀▀▀▀▀▀    █ █    █   █
+                         D-TECH SNI Host Checker
+    ==================================================
+    """)
+
+def test_tcp_connection(host):
+    try:
+        start_time = time.time()
+        socket.setdefaulttimeout(5)  # Timeout for the socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect((host, 443))  # Connect to port 443 for HTTPS
+        tcp_time = round(time.time() - start_time, 2)
+        return True, tcp_time
+    except Exception:
+        return False, None
+
+def test_https_request(host):
+    try:
+        start_time = time.time()
+        response = requests.get(f'https://{host}', timeout=5)
+        http_time = round(time.time() - start_time, 2)
+        if response.status_code == 200:
+            return True, http_time
+        else:
+            return False, None
+    except requests.exceptions.RequestException:
+        return False, None
+
+def test_sni_connection(sni_host):
+    tcp_success, tcp_time = test_tcp_connection(sni_host)
+    http_success, http_time = test_https_request(sni_host)
+
+    # Set rating to 0% if either connection fails
+    if not tcp_success or not http_success:
+        return None
+
+    # Calculate overall rating if both tests are successful
+    total_time = round(tcp_time + http_time, 2)
+    rating = 100 - total_time * 10  # Simplified rating calculation
+    return max(0, rating), tcp_time, http_time
+
+def extract_valid_hosts(file_content):
+    valid_hosts = []
+    lines = file_content.splitlines()
+
+    for line in lines:
+        matches = re.findall(HOST_REGEX, line)
+        for match in matches:
+            # Check if match contains a valid domain or IP
+            if match[0]:  # IP addresses
+                valid_hosts.append(match[0])
+            elif match[2]:  # Domains
+                valid_hosts.append(match[2])
+
+    return valid_hosts
+
+def bulk_sni_test(input_file, output_file):
+    print_banner()
+    try:
+        with open(input_file, 'r') as file:
+            file_content = file.read()
+    except FileNotFoundError:
+        print(Fore.RED + f"Error: The file '{input_file}' does not exist.")
+        return
+
+    sni_hosts = extract_valid_hosts(file_content)
+
+    if not sni_hosts:
+        print(Fore.RED + "No valid SNI hosts found in the file.")
+        return
+
+    successful_hosts = []
+
+    for sni_host in sni_hosts:
+        print(Fore.CYAN + f"\n[~] Testing SNI: {sni_host}\n")
+        result = test_sni_connection(sni_host)
+
+        if result:
+            rating, tcp_time, http_time = result
+            print(Fore.GREEN + f"[✔] {sni_host} - Rating: {rating}%, TCP Time: {tcp_time}s, HTTP Time: {http_time}s\n")
+            successful_hosts.append(f"{sni_host} - Rating: {rating}%, TCP Time: {tcp_time}s, HTTP Time: {http_time}s")
+        else:
+            print(Fore.RED + f"[✘] {sni_host} - Connection test failed.\n")
+
+    # Save successful hosts to a file
+    with open(output_file, 'w') as file:
+        for host in successful_hosts:
+            file.write(f"{host}\n")
+
+    print(Fore.YELLOW + f"\n[+] Successfully tested all SNIs. Results saved to '{output_file}'.")
+
+def main():
+    input_file = input(Fore.CYAN + "[+] Enter the input file name (e.g., sni_hosts.txt): ")
+    output_file = input(Fore.CYAN + "[+] Enter the output file name to save successful results (e.g., successful_snis.txt): ")
+    bulk_sni_test(input_file, output_file)
+
+if __name__ == "__main__":
+    main()
